@@ -1,215 +1,256 @@
-# Sistema de Procesamiento Asíncrono de Reportes
+<div align="center">
 
-[![Deploy to AWS](https://github.com/JuanCeron023/juan-prosperas-challenge/actions/workflows/deploy.yml/badge.svg)](https://github.com/JuanCeron023/juan-prosperas-challenge/actions/workflows/deploy.yml)
+# ⚡ Asynchronous Distributed Report Processing System
 
-Sistema completo de procesamiento asíncrono de reportes para una plataforma SaaS de analítica. Los usuarios solicitan reportes bajo demanda que se procesan en segundo plano mediante una arquitectura basada en colas de mensajes (AWS SQS) y workers concurrentes, con persistencia en AWS DynamoDB.
+**Production-grade asynchronous job processing platform built with FastAPI, React 18, AWS SQS, DynamoDB, and resilient Python workers.**
 
-## Arquitectura
+[![Python](https://img.shields.io/badge/Python-3.11-blue.svg?logo=python&logoColor=white)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/React-18-61DAFB.svg?logo=react&logoColor=black)](https://react.dev)
+[![AWS SQS](https://img.shields.io/badge/AWS-SQS-FF9900.svg?logo=amazonsqs&logoColor=white)](https://aws.amazon.com/sqs/)
+[![DynamoDB](https://img.shields.io/badge/AWS-DynamoDB-4053D6.svg?logo=amazondynamodb&logoColor=white)](https://aws.amazon.com/dynamodb/)
+[![Docker](https://img.shields.io/badge/Docker-Compose%20v2-2496ED.svg?logo=docker&logoColor=white)](https://docker.com)
+[![Terraform](https://img.shields.io/badge/IaC-Terraform-7B42BC.svg?logo=terraform&logoColor=white)](https://terraform.io)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
+[English](README.md) | [Español](README.es.md)
+
+</div>
+
+---
+
+## 📖 Overview
+
+This repository provides an enterprise-ready, distributed, asynchronous report processing platform for analytics and SaaS applications. 
+
+Clients submit on-demand report requests via a secure REST API. Requests are decoupled via message queues (**AWS SQS**) with multi-tier priority handling, processed concurrently by resilient background workers (**Python `asyncio`** with circuit breakers and retries), and persisted in **AWS DynamoDB**. Real-time job updates are streamed to the frontend over **Server-Sent Events (SSE)**.
+
+---
+
+## 🏛️ System Architecture
+
+```mermaid
+flowchart TD
+    subgraph ClientLayer ["Client Layer"]
+        UI["React 18 SPA (TypeScript + Vite)"]
+    end
+
+    subgraph APILayer ["API Gateway & Core API"]
+        API["FastAPI Backend (Python 3.11)"]
+        Auth["JWT Authentication & RBAC"]
+        SSE["SSE Stream Service (/stream/jobs)"]
+    end
+
+    subgraph MessagingLayer ["Messaging & Queuing (AWS SQS)"]
+        HighQ[("High-Priority SQS Queue")]
+        StdQ[("Standard SQS Queue")]
+        DLQ[("Dead Letter Queue (DLQ)")]
+    end
+
+    subgraph WorkerLayer ["Distributed Workers (asyncio)"]
+        Worker["Concurrent Queue Consumer"]
+        CB["Circuit Breaker & Exponential Backoff"]
+        Processor["Report Generator Engine"]
+    end
+
+    subgraph StorageLayer ["Data Persistence (AWS DynamoDB)"]
+        JobsTable[("Jobs State Table")]
+        UsersTable[("Users Auth Table")]
+    end
+
+    UI -->|1. Submit Job Request (JWT)| API
+    API --> Auth
+    API -->|2. Write Initial State (PENDING)| JobsTable
+    API -->|3. Publish Message| HighQ
+    API -->|3. Publish Message| StdQ
+    
+    Worker -->|4. Poll & Consume Messages| HighQ
+    Worker -->|4. Poll & Consume Messages| StdQ
+    Worker -.->|Excessive Failures| DLQ
+    Worker --> CB --> Processor
+    Processor -->|5. Update Progress & Results| JobsTable
+    
+    JobsTable -.->|State Mutation Stream| SSE
+    SSE -.->|6. Push Live Status via SSE| UI
 ```
-┌─────────────┐     ┌──────────────┐     ┌─────────────┐
-│  Frontend   │────▶│  Backend API │────▶│   AWS SQS   │
-│  (React 18) │     │  (FastAPI)   │     │  (Cola)     │
-└─────────────┘     └──────┬───────┘     └──────┬──────┘
-                           │                     │
-                           ▼                     ▼
-                    ┌──────────────┐     ┌─────────────┐
-                    │  DynamoDB    │◀────│   Worker    │
-                    │  (Estado)    │     │  (asyncio)  │
-                    └──────────────┘     └─────────────┘
-```
 
-## Requisitos Previos
+---
 
-- Docker y Docker Compose v2+
+## ✨ Key Architectural Features
+
+- **⚡ Asynchronous Decoupling:** API requests return immediately with an HTTP 202 Accepted status and job tracking ID, preventing timeout bottlenecks on heavy analytical tasks.
+- **🚦 Dual Priority Queues:** Dedicated SQS queues for standard vs. high-priority jobs to ensure SLA compliance for critical requests.
+- **🔄 Fault-Tolerant Worker Pool:**
+  - Implements **Circuit Breakers** and **Exponential Backoff with Full Jitter** to prevent cascading downstream outages.
+  - Automatic Dead-Letter Queue (DLQ) routing for poisoned or repeatedly failing payloads.
+- **📡 Real-Time Server-Sent Events (SSE):** Frontends stream live progress updates (`PENDING` $\rightarrow$ `PROCESSING` $\rightarrow$ `COMPLETED` / `FAILED`) without polling spam.
+- **💾 Idempotent DynamoDB State:** All state transitions and result payloads are stored with optimistic locking and atomic status updates.
+- **☁️ LocalStack Zero-Cost Emulation:** Full offline local development environment emulating AWS SQS and DynamoDB via LocalStack.
+- **🏗️ Infrastructure as Code (Terraform):** Production-ready Terraform configurations for automated provisioning of AWS cloud infrastructure.
+- **🧪 Rigorous Verification Suite:** Comprehensive test coverage using `pytest`, `pytest-asyncio`, AWS `moto` mocking, and property-based testing with `hypothesis`.
+
+---
+
+## 🚀 Quick Start (Local Development)
+
+### Prerequisites
+- [Docker](https://www.docker.com/) & Docker Compose v2+
 - Git
-- (Opcional) Python 3.11+ para desarrollo sin Docker
-- (Opcional) Node.js 18+ para desarrollo del frontend sin Docker
+- *(Optional)* Python 3.11+ and Node.js 18+ for local non-containerized debugging.
 
-## Inicio Rápido — Desarrollo Local
+### 1. Clone & Configure Environment
+```bash
+git clone https://github.com/JuanCeron023/asynchronous-Report-Processing-SystemV1.git
+cd asynchronous-Report-Processing-SystemV1
 
-1. **Clonar el repositorio:**
-   ```bash
-   git clone <REPO_URL>
-   cd async-report-processing
-   ```
+# Copy environment variables
+cp .env.example .env
+```
 
-2. **Configurar variables de entorno:**
-   ```bash
-   cp .env.example .env
-   ```
+### 2. Launch Stack via Docker Compose
+```bash
+docker compose up -d --build
+```
 
-3. **Levantar todos los servicios:**
-   ```bash
-   docker compose up
-   ```
+This single command provisions the complete ecosystem:
+| Service | URL / Port | Purpose |
+|---|---|---|
+| **Frontend Web UI** | [http://localhost:3000](http://localhost:3000) | React 18 dashboard with real-time SSE job monitoring |
+| **Backend API** | [http://localhost:8000](http://localhost:8000) | FastAPI core REST API |
+| **OpenAPI Docs (Swagger)** | [http://localhost:8000/docs](http://localhost:8000/docs) | Interactive API exploration and testing |
+| **LocalStack AWS** | [http://localhost:4566](http://localhost:4566) | Local AWS SQS & DynamoDB emulator |
+| **Background Worker** | *Internal container* | Autonomous asyncio SQS consumer & report generator |
 
-   Esto levanta automáticamente:
-   - **LocalStack** (emulador AWS) — puerto 4566
-   - **Backend API** (FastAPI) — http://localhost:8000
-   - **Worker** (consumidor SQS)
-   - **Frontend** (React + Nginx) — http://localhost:3000
+### 3. Verify Health
+```bash
+curl -s http://localhost:8000/health
+# {"status":"healthy","services":{"dynamodb":"up","sqs":"up"}}
+```
 
-4. **Verificar que todo funciona:**
-   ```bash
-   # Health check del API
-   curl http://localhost:8000/health
+---
 
-   # Documentación OpenAPI
-   open http://localhost:8000/docs
-   ```
+## 📡 API Specification
 
-## Comandos de Desarrollo
+All protected endpoints require a valid Bearer token in the `Authorization` header (`Bearer <JWT>`).
 
-### Docker Compose (recomendado)
+| Method | Endpoint | Description | Auth Required |
+|---|---|---|:---:|
+| `POST` | `/auth/register` | Register a new user | No |
+| `POST` | `/auth/login` | Authenticate and obtain JWT token | No |
+| `POST` | `/jobs` | Create a new report processing job | **Yes** |
+| `GET` | `/jobs` | List user's jobs with pagination and filters | **Yes** |
+| `GET` | `/jobs/{job_id}` | Query current status and results of a job | **Yes** |
+| `GET` | `/stream/jobs` | Server-Sent Events (SSE) live status stream | **Yes** |
+| `GET` | `/health` | Service health check & AWS connectivity | No |
+
+### Example: Creating a Report Job
 
 ```bash
-# Levantar todos los servicios
-docker compose up
+# 1. Login to retrieve token
+TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@example.com","password":"secretpassword"}' | jq -r .access_token)
 
-# Levantar en background
-docker compose up -d
-
-# Reconstruir imágenes tras cambios
-docker compose up --build
-
-# Ver logs de un servicio específico
-docker compose logs -f backend
-docker compose logs -f worker
-
-# Detener todos los servicios
-docker compose down
-
-# Detener y eliminar volúmenes
-docker compose down -v
+# 2. Submit high-priority report request
+curl -s -X POST http://localhost:8000/jobs \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "report_type": "sales_summary",
+    "priority": "HIGH",
+    "parameters": {
+      "start_date": "2026-01-01",
+      "end_date": "2026-09-01"
+    }
+  }'
 ```
 
-### Backend (desarrollo sin Docker)
+---
 
+## 💻 Non-Docker Development
+
+### Backend API
 ```bash
 cd backend
-
-# Crear entorno virtual
 python -m venv .venv
-source .venv/bin/activate  # Linux/Mac
-# .venv\Scripts\activate   # Windows
-
-# Instalar dependencias
+source .venv/bin/activate # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-
-# Ejecutar servidor de desarrollo
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
 
-# Ejecutar tests
+### Worker Process
+```bash
+cd worker
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python -m app.main
+```
+
+### Frontend UI
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+### Running Test Suite
+```bash
+cd backend
 pip install pytest pytest-asyncio moto[all] httpx hypothesis
 pytest tests/ -v
 ```
 
-### Worker (desarrollo sin Docker)
+---
 
-```bash
-cd worker
+## 🏗️ Production Cloud Deployment (Terraform)
 
-# Crear entorno virtual
-python -m venv .venv
-source .venv/bin/activate
-
-# Instalar dependencias
-pip install -r requirements.txt
-
-# Ejecutar worker
-python -m app.main
-```
-
-### Frontend (desarrollo sin Docker)
-
-```bash
-cd frontend
-
-# Instalar dependencias
-npm install
-
-# Servidor de desarrollo con hot reload
-npm run dev
-
-# Build de producción
-npm run build
-
-# Lint
-npm run lint
-```
-
-### Infraestructura (Terraform)
+Infrastructure can be provisioned directly to AWS using Terraform:
 
 ```bash
 cd infra/terraform
-
-# Inicializar Terraform
 terraform init
-
-# Ver plan de cambios
 terraform plan
-
-# Aplicar infraestructura
-terraform apply
-
-# Destruir infraestructura
-terraform destroy
+terraform apply -auto-approve
 ```
 
-## Variables de Entorno
+See [`DEPLOYMENT_GUIDE.md`](DEPLOYMENT_GUIDE.md) and [`TECHNICAL_DOCS.md`](TECHNICAL_DOCS.md) for architecture details, IAM policies, and VPC configuration.
 
-Ver `.env.example` para la lista completa de variables con descripciones.
+---
 
-| Variable | Descripción | Default (dev) |
-|----------|-------------|---------------|
-| `AWS_REGION` | Región AWS | `us-east-1` |
-| `AWS_ENDPOINT_URL` | Endpoint LocalStack (solo dev) | `http://localhost:4566` |
-| `JWT_SECRET` | Secreto para firmar tokens JWT | `change-me-in-production` |
-| `JWT_EXPIRATION_MINUTES` | Expiración del token en minutos | `60` |
-| `DYNAMODB_JOBS_TABLE` | Nombre de la tabla de trabajos | `jobs` |
-| `DYNAMODB_USERS_TABLE` | Nombre de la tabla de usuarios | `users` |
-| `SQS_STANDARD_QUEUE_URL` | URL de la cola estándar | (ver .env.example) |
-| `SQS_HIGH_QUEUE_URL` | URL de la cola de alta prioridad | (ver .env.example) |
-| `WORKER_CONCURRENCY` | Mensajes procesados en paralelo | `2` |
-
-## URL de Producción
-
-> **Placeholder:** La URL de producción se genera tras el despliegue con Terraform y se registra en los logs del pipeline CI/CD.
->
-> ```
-> http://<EC2_PUBLIC_IP>
-> ```
-
-## Estructura del Proyecto
+## 📁 Repository Structure
 
 ```
-├── backend/              # API REST (FastAPI + Python 3.11)
-├── worker/               # Consumidor SQS + procesador de reportes
-├── frontend/             # Interfaz web (React 18 + Vite + TypeScript)
+├── backend/                  # FastAPI REST API application
+│   ├── app/
+│   │   ├── auth/             # JWT authentication & security dependencies
+│   │   ├── db/               # DynamoDB repository & data models
+│   │   ├── jobs/             # Job creation, listing & lifecycle handlers
+│   │   ├── queue/            # SQS message publishing client
+│   │   ├── stream/           # Server-Sent Events (SSE) streaming
+│   │   └── observability/    # Structured JSON logging & Prometheus metrics
+├── worker/                   # Distributed background consumer
+│   ├── app/
+│   │   ├── consumer.py       # SQS long-polling consumer
+│   │   ├── processor.py      # Report calculation & state transition engine
+│   │   ├── circuit_breaker.py# Resilience circuit breaker pattern
+│   │   └── retry.py          # Backoff and retry policies
+├── frontend/                 # React 18 + Vite + TypeScript dashboard
+│   ├── src/
+│   │   ├── components/       # JobForm, JobList, StatusBadges, Toasts
+│   │   ├── hooks/            # useAuth, useJobs, useSSE (real-time stream)
+│   │   └── pages/            # Dashboard and Authentication views
 ├── infra/
-│   ├── terraform/        # IaC para producción (AWS)
-│   └── localstack/       # Scripts de inicialización local
-├── .github/workflows/    # Pipeline CI/CD
-├── docker-compose.yml    # Orquestación local
-├── .env.example          # Variables de entorno documentadas
-├── TECHNICAL_DOCS.md     # Documentación técnica detallada
-├── SKILL.md              # Contexto para agentes de IA
-└── AI_WORKFLOW.md        # Evidencia de uso de herramientas IA
+│   ├── terraform/            # AWS production infrastructure as code
+│   └── localstack/           # Local AWS SQS & DynamoDB initialization scripts
+├── docker-compose.yml        # Multi-service local orchestrator
+├── DEPLOYMENT_GUIDE.md       # Step-by-step production deployment manual
+├── TECHNICAL_DOCS.md         # In-depth architectural specifications
+└── LICENSE                   # MIT License
 ```
 
-## API Endpoints
+---
 
-| Método | Ruta | Descripción | Auth |
-|--------|------|-------------|------|
-| POST | `/auth/register` | Registro de usuario | No |
-| POST | `/auth/login` | Login, retorna JWT | No |
-| POST | `/jobs` | Crear trabajo de reporte | JWT |
-| GET | `/jobs` | Listar trabajos paginados | JWT |
-| GET | `/jobs/{job_id}` | Consultar estado de trabajo | JWT |
-| GET | `/health` | Health check del sistema | No |
-| GET | `/stream/jobs` | Stream SSE (bonus) | JWT |
+## 📄 License
 
-## Licencia
-
-MIT
+This project is licensed under the [MIT License](LICENSE). Developed by [Juan Cerón](https://github.com/JuanCeron023).
