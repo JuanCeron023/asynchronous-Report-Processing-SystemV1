@@ -44,10 +44,10 @@ flowchart TD
     subgraph MessagingLayer ["Messaging & Queuing (AWS SQS)"]
         HighQ[("High-Priority SQS Queue")]
         StdQ[("Standard SQS Queue")]
-        DLQ[("Dead Letter Queue (DLQ)")]
+        DLQ[("Dead Letter Queue - DLQ")]
     end
 
-    subgraph WorkerLayer ["Distributed Workers (asyncio)"]
+    subgraph WorkerLayer ["Distributed Workers (Asyncio)"]
         Worker["Concurrent Queue Consumer"]
         CB["Circuit Breaker & Exponential Backoff"]
         Processor["Report Generator Engine"]
@@ -58,20 +58,21 @@ flowchart TD
         UsersTable[("Users Auth Table")]
     end
 
-    UI -->|1. Submit Job Request (JWT)| API
+    UI -->|"1. Submit Job Request (JWT)"| API
     API --> Auth
-    API -->|2. Write Initial State (PENDING)| JobsTable
-    API -->|3. Publish Message| HighQ
-    API -->|3. Publish Message| StdQ
+    API -->|"2. Write Initial State (PENDING)"| JobsTable
+    API -->|"3. Publish Message"| HighQ
+    API -->|"3. Publish Message"| StdQ
     
-    Worker -->|4. Poll & Consume Messages| HighQ
-    Worker -->|4. Poll & Consume Messages| StdQ
-    Worker -.->|Excessive Failures| DLQ
-    Worker --> CB --> Processor
-    Processor -->|5. Update Progress & Results| JobsTable
+    Worker -->|"4. Poll & Consume Messages"| HighQ
+    Worker -->|"4. Poll & Consume Messages"| StdQ
+    Worker -.->|"Excessive Failures"| DLQ
+    Worker --> CB
+    CB --> Processor
+    Processor -->|"5. Update Progress & Results"| JobsTable
     
-    JobsTable -.->|State Mutation Stream| SSE
-    SSE -.->|6. Push Live Status via SSE| UI
+    JobsTable -.->|"State Mutation Stream"| SSE
+    SSE -.->|"6. Push Live Status via SSE"| UI
 ```
 
 ---
